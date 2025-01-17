@@ -1,0 +1,55 @@
+setwd("F:/lucas.sanglard/OneDrive - Ministério da Saúde/Área de Trabalho/MAPEAMENTO/")
+Sys.setlocale("LC_ALL", "pt_br.utf-8") 
+gc(T)
+rm(list = ls())
+
+if (!require(ggplot2)) install.packages("ggplot2")
+if (!require(sf)) install.packages("sf")
+if (!require(rnaturalearth)) install.packages("rnaturalearth")
+if (!require(dplyr)) install.packages("dplyr")
+
+# Carregue os pacotes
+library(ggplot2)
+library(sf)
+library(rnaturalearth)
+library(dplyr)
+
+list_csv_files <- list.files(path = "F:/lucas.sanglard/OneDrive - Ministério da Saúde/Área de Trabalho/MAPEAMENTO/CTF2024/")
+
+dado_bind <- NULL
+
+
+for (file in list_csv_files) {
+  dir_file <- paste0("F:/lucas.sanglard/OneDrive - Ministério da Saúde/Área de Trabalho/MAPEAMENTO/CTF2024", "/", file)
+  dado_ano <- read.csv(dir_file, sep = ";")
+  dado_bind <- rbind(dado_bind, dado_ano)
+}
+
+
+#tira duplicidade
+CTF_BRASIL <- dado_bind[!duplicated(dado_bind$Razão.Social), ]
+
+#lat long numerico
+CTF_BRASIL$Latitude <- as.numeric(gsub(",", ".", CTF_BRASIL$Latitude))
+CTF_BRASIL$Longitude <- as.numeric(gsub(",", ".", CTF_BRASIL$Longitude))
+
+#shape brasil
+brasil <- ne_countries(scale = "medium", country = "Brazil", returnclass = "sf")
+
+#plot
+ggplot(data = brasil) +
+  geom_sf(fill = "white", color = "black") +
+  geom_point(data = CTF_BRASIL, aes(x = Longitude, y = Latitude, color = Situação.cadastral), size = 2) +
+  theme_minimal() +
+  labs(title = "Pontos de Atividades no Brasil",
+       x = "Longitude",
+       y = "Latitude",
+       color = "Situação Cadastral")
+
+
+
+
+
+# Crie um objeto sf (simple feature) para os pontos
+CTF_BRASIL_sf <- st_as_sf(CTF_BRASIL, coords = c("Longitude", "Latitude"), crs = 4326)
+

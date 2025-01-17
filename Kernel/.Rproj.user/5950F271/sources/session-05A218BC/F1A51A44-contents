@@ -1,0 +1,96 @@
+#cORRIGIR BANCO
+setwd("F:/lucas.sanglard/OneDrive - Ministério da Saúde/Área de Trabalho/MAPEAMENTO/")
+Sys.setlocale("LC_ALL", "pt_br.utf-8") 
+gc(T)
+rm(list = ls())
+
+if (!require(ggplot2)) install.packages("ggplot2")
+if (!require(sf)) install.packages("sf")
+if (!require(rnaturalearth)) install.packages("rnaturalearth")
+if (!require(dplyr)) install.packages("dplyr")
+if (!require(purrr)) install.packages("purrr")
+
+# Carregue os pacotes
+library(ggplot2)
+library(sf)
+library(rnaturalearth)
+library(dplyr)
+library(purrr)
+library(shiny)
+library(tidyverse)
+library(leaflet)
+
+#loop
+list_csv_files <- list.files(path = "F:/lucas.sanglard/OneDrive - Ministério da Saúde/Área de Trabalho/MAPEAMENTO/CTF2024/")
+
+dado_bind <- NULL
+for (file in list_csv_files) {
+  dir_file <- paste0("F:/lucas.sanglard/OneDrive - Ministério da Saúde/Área de Trabalho/MAPEAMENTO/CTF2024", "/", file)
+  dado_ano <- read.csv(dir_file, sep = ";")
+  dado_bind <- rbind(dado_bind, dado_ano)
+}
+
+# corrigir nomes
+colnames(dado_bind) <- c("CNPJ", "Razao_Social", "Codigo_da_categoria", "Descricao_da_categoria",
+                         "Codigo_da_atividade", "Descricao_da_atividade", "Data_de_inicio_da_atividade",
+                         "Data_de_termino_da_atividade", "Potencial_de_Poluicao_da_atividade", "Municipio",
+                         "Estado", "Latitude", "Longitude", "Situacao_cadastral", "Ultima_Atualizacao_Relatorio")
+
+
+# Remova linhas duplicadas com base na coluna Razao_Social
+CTF_BRASIL <- dado_bind |> filter(!duplicated(Razao_Social))
+
+# Verifique se as colunas de Latitude e Longitude existem
+if(!all(c("Latitude", "Longitude") %in% colnames(CTF_BRASIL))) {
+  stop("As colunas 'Latitude' e 'Longitude' não foram encontradas no dataframe.")
+}
+
+
+
+# Verifique se os dados têm Latitude e Longitude antes de criar o objeto sf
+#if (nrow(data) == 0 || all(is.na(data$Latitude)) || all(is.na(data$Longitude))) {
+#stop("Nenhum dado disponível ou colunas de Latitude/Longitude ausentes após o filtro.")
+#}
+
+# Verificação das colunas Longitude e Latitude
+#if (!("Longitude" %in% colnames(data)) || !("Latitude" %in% colnames(data))) {
+#stop("Colunas Longitude ou Latitude não encontradas após filtragem.")
+#}
+
+
+# Converta Latitude e Longitude para numérico
+CTF_BRASIL <- CTF_BRASIL %>%
+  mutate(Latitude = as.numeric(gsub(",", ".", Latitude)),
+         Longitude = as.numeric(gsub(",", ".", Longitude)))
+
+# Remova linhas com valores ausentes em Latitude ou Longitude
+CTF_BRASIL <- CTF_BRASIL %>%
+  filter(!is.na(Latitude) & !is.na(Longitude))
+
+# Verifique se o dataframe ainda tem dados após a limpeza
+if(nrow(CTF_BRASIL) == 0) {
+  stop("Nenhum dado disponível após a limpeza. Verifique suas colunas de Latitude e Longitude.")
+}
+
+# Defina as regiões do Brasil
+regioes <- list(
+  Norte = c("ACRE", "AMAPÁ", "AMAZONAS", "PARÁ", "RONDÔNIA", "RORAIMA", "TOCANTINS"),
+  Nordeste = c("ALAGOAS", "BAHIA", "CEARÁ", "MARANHÃO", "PARAÍBA", "PERNAMBUCO", "PIAUÍ", "RIO GRANDE DO NORTE", "SERGIPE"),
+  Centro_Oeste = c("DISTRITO FEDERAL", "GOIÁS", "MATO GROSSO", "MATO GROSSO DO SUL"),
+  Sudeste = c("ESPÍRITO SANTO", "MINAS GERAIS", "RIO DE JANEIRO", "SÃO PAULO"),
+  Sul = c("PARANÁ", "RIO GRANDE DO SUL", "SANTA CATARINA")
+)
+
+# Adicione a coluna Região ao dataframe
+CTF_BRASIL <- CTF_BRASIL %>%
+  mutate(Região = case_when(
+    Estado %in% regioes$Norte ~ "Norte",
+    Estado %in% regioes$Nordeste ~ "Nordeste",
+    Estado %in% regioes$Centro_Oeste ~ "Centro-Oeste",
+    Estado %in% regioes$Sudeste ~ "Sudeste",
+    Estado %in% regioes$Sul ~ "Sul",
+    TRUE ~ NA_character_
+  ))
+
+writexl::write_xlsx(CTF_BRASIL, "./CTF2024/CTF_BRASIL.xlsx")
+

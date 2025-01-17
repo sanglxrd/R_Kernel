@@ -1,0 +1,218 @@
+Sys.setlocale("LC_ALL", "pt_br.utf-8") 
+
+gc(T)
+rm(list = ls())
+
+library(shiny)
+library(leaflet)
+library(sf)
+library(dplyr)
+library(readr)
+library(tidyverse)
+library(leaflet.extras)
+library(shinycssloaders)
+library(rnaturalearth)
+library(rnaturalearthdata)
+
+# Banco de dados
+CTF_BRASIL <- readxl::read_xlsx("./CTF2024/CTF_BRASIL_limpo.xlsx")
+
+# Carregar um polígono simplificado do Brasil
+brasil_polygon <- ne_countries(scale = "medium", returnclass = "sf") %>%
+  filter(admin == "Brazil")
+
+# Interface do usuário (UI)
+set.seed(42)
+ui <- fluidPage(
+  titlePanel("ATLAS DE VIGILÂNCIA EM SAÚDE DE POPULAÇÕES EXPOSTAS A SUBSTÂNCIAS QUÍMICAS"),
+  tabsetPanel(
+    tabPanel(
+      "CTF/APP",
+      sidebarLayout(
+        sidebarPanel(
+          selectInput("regiao", "Selecione a Região:", c("Todos", unique(CTF_BRASIL$Região))),
+          selectInput("estado", "Selecione o Estado:", choices = NULL),
+          selectInput("potencial", "Selecione o Potencial Poluidor:", choices = c("Todos", unique(CTF_BRASIL$Potencial_de_Poluicao_da_atividade))),
+          selectInput("categoria", "Selecione a Descrição da Categoria:", choices = c("Todos", unique(CTF_BRASIL$Descricao_da_categoria))),
+          selectInput("situacao", "Selecione a Situação Cadastral:", choices = c("Todos", unique(CTF_BRASIL$Situacao_cadastral))),
+          selectInput("coord_erro", "Selecione Coordenadas:", c("Todos", "Coordenadas com Erro", "Coordenadas sem Erro")),
+          actionButton("filtrar", "Aplicar Filtros"),
+          actionButton("limpar", "Limpar Filtros")
+        ),
+        mainPanel(
+          withSpinner(leafletOutput("map"))
+        )
+      )
+    ),
+    tabPanel(
+      "Mapa de Calor (CTF/APP)",
+      sidebarLayout(
+        sidebarPanel(
+          selectInput("regiao_analise", "Selecione a Região:", c("Todos", unique(CTF_BRASIL$Região))),
+          selectInput("estado_analise", "Selecione o Estado:", choices = NULL),
+          selectInput("potencial_analise", "Selecione o Potencial Poluidor:", choices = c("Todos", unique(CTF_BRASIL$Potencial_de_Poluicao_da_atividade))),
+          selectInput("categoria_analise", "Selecione a Descrição da Categoria:", choices = c("Todos", unique(CTF_BRASIL$Descricao_da_categoria))),
+          selectInput("situacao_analise", "Selecione a Situação Cadastral:", choices = c("Todos", unique(CTF_BRASIL$Situacao_cadastral))),
+          actionButton("filtrar_analise", "Aplicar Filtros"),
+          actionButton("limpar_analise", "Limpar Filtros")
+        ),
+        mainPanel(
+          withSpinner(leafletOutput("heatmap"))
+        )
+      )
+    ),
+    tabPanel(
+      "SISSOLO",
+      sidebarLayout(
+        sidebarPanel(
+          selectInput("regiao_sissolo", "Selecione a Região:", c("Todos", unique(CTF_BRASIL$Região))),
+          selectInput("estado_sissolo", "Selecione o Estado:", choices = NULL),
+          selectInput("potencial_sissolo", "Selecione o Potencial Poluidor:", choices = c("Todos", unique(CTF_BRASIL$Potencial_de_Poluicao_da_atividade))),
+          selectInput("categoria_sissolo", "Selecione a Descrição da Categoria:", choices = c("Todos", unique(CTF_BRASIL$Descricao_da_categoria))),
+          selectInput("situacao_sissolo", "Selecione a Situação Cadastral:", choices = c("Todos", unique(CTF_BRASIL$Situacao_cadastral))),
+          actionButton("filtrar_sissolo", "Aplicar Filtros"),
+          actionButton("limpar_sissolo", "Limpar Filtros")
+        ),
+        mainPanel(
+          withSpinner(leafletOutput("sissolo_map"))
+        )
+      )
+    )
+  )
+)
+
+# Defina as cores para as situações cadastrais
+cores_situacao <- c("Ativa" = "green", "Suspensa para Averiguações" = "yellow", "Encerrado" = "red")
+
+# Defina um conjunto de cores para as categorias (aqui usamos uma paleta básica, mas pode ser ajustada conforme necessário)
+categorias_unicas <- unique(CTF_BRASIL$Descricao_da_categoria)
+cores_categoria <- rainbow(length(categorias_unicas))
+names(cores_categoria) <- categorias_unicas
+
+# Cor especial para pontos fora dos limites
+cor_fora_limite <- "black"
+
+# Servidor (Server)
+server <- function(input, output, session) {
+  # Função para limpar filtros
+  limparFiltros <- function() {
+    updateSelectInput(session, "regiao", selected = "Todos")
+    updateSelectInput(session, "estado", selected = "Todos", choices = NULL)
+    updateSelectInput(session, "potencial", selected = "Todos")
+    updateSelectInput(session, "categoria", selected = "Todos")
+    updateSelectInput(session, "situacao", selected = "Todos")
+    updateSelectInput(session, "coord_erro", selected = "Todos")
+    output$map <- renderLeaflet({ leaflet() %>% addTiles() })
+  }
+  
+  # Função para limpar filtros na aba de análise
+  limparFiltrosAnalise <- function() {
+    updateSelectInput(session, "regiao_analise", selected = "Todos")
+    updateSelectInput(session, "estado_analise", selected = "Todos", choices = NULL)
+    updateSelectInput(session, "potencial_analise", selected = "Todos")
+    updateSelectInput(session, "categoria_analise", selected = "Todos")
+    updateSelectInput(session, "situacao_analise", selected = "Todos")
+    output$heatmap <- renderLeaflet({ leaflet() %>% addTiles() })
+  }
+  
+  # Observador para o botão de limpar filtros
+  observeEvent(input$limpar, {
+    limparFiltros()
+  })
+  
+  # Observador para o botão de limpar filtros na aba de análise
+  observeEvent(input$limpar_analise, {
+    limparFiltrosAnalise()
+  })
+  
+  # Atualize as opções de estado com base na região selecionada
+  observeEvent(input$regiao, {
+    if (input$regiao == "Todos") {
+      estados <- unique(CTF_BRASIL$Estado)
+    } else {
+      estados <- CTF_BRASIL %>%
+        filter(Região == input$regiao) %>%
+        pull(Estado) %>%
+        unique()
+    }
+    updateSelectInput(session, "estado", choices = c("Todos", estados))
+  })
+  
+  observeEvent(input$regiao_analise, {
+    if (input$regiao_analise == "Todos") {
+      estados <- unique(CTF_BRASIL$Estado)
+    } else {
+      estados <- CTF_BRASIL %>%
+        filter(Região == input$regiao_analise) %>%
+        pull(Estado) %>%
+        unique()
+    }
+    updateSelectInput(session, "estado_analise", choices = c("Todos", estados))
+  })
+  
+  # Aplicar filtros e renderizar o mapa de pontos sob demanda
+  observeEvent(input$filtrar, {
+    data <- CTF_BRASIL %>%
+      filter(
+        (input$regiao == "Todos" | Região == input$regiao) &
+          (input$estado == "Todos" | Estado == input$estado) &
+          (input$potencial == "Todos" | Potencial_de_Poluicao_da_atividade == input$potencial) &
+          (input$categoria == "Todos" | Descricao_da_categoria == input$categoria) &
+          (input$situacao == "Todos" | Situacao_cadastral == input$situacao)
+      )
+    
+    colnames(data) <- make.names(colnames(data))
+    data_sf <- st_as_sf(data, coords = c("Longitude", "Latitude"), crs = 4326, remove = FALSE)
+    
+    pontos_dentro_brasil <- st_within(data_sf, brasil_polygon, sparse = FALSE)
+    
+    if (input$coord_erro == "Coordenadas com Erro") {
+      data_sf <- data_sf[!pontos_dentro_brasil, ]
+    } else if (input$coord_erro == "Coordenadas sem Erro") {
+      data_sf <- data_sf[pontos_dentro_brasil, ]
+    }
+    
+    output$map <- renderLeaflet({
+      leaflet(data = data_sf) %>%
+        addTiles() %>%
+        addCircleMarkers(
+          lng = ~Longitude, lat = ~Latitude, 
+          popup = ~paste("CNPJ:", CNPJ, "<br>", "Município:", Municipio, "<br>", Estado, "<br>", Potencial_de_Poluicao_da_atividade, "<br>", Descricao_da_categoria, "<br>", Situacao_cadastral),
+          label = ~Situacao_cadastral,
+          radius = 5,
+          color = ~ifelse(Longitude %in% data_sf$Longitude[!pontos_dentro_brasil], cor_fora_limite, cores_situacao[Situacao_cadastral]),
+          fillColor = ~cores_categoria[Descricao_da_categoria],
+          fillOpacity = 0.7,
+          clusterOptions = markerClusterOptions()
+        )
+    })
+  })
+  
+  # Aplicar filtros e renderizar o mapa de calor sob demanda
+  observeEvent(input$filtrar_analise, {
+    data <- CTF_BRASIL %>%
+      filter(
+        (input$regiao_analise == "Todos" | Região == input$regiao_analise) &
+          (input$estado_analise == "Todos" | Estado == input$estado_analise) &
+          (input$potencial_analise == "Todos" | Potencial_de_Poluicao_da_atividade == input$potencial_analise) &
+          (input$categoria_analise == "Todos" | Descricao_da_categoria == input$categoria_analise) &
+          (input$situacao_analise == "Todos" | Situacao_cadastral == input$situacao_analise)
+      )
+    
+    colnames(data) <- make.names(colnames(data))
+    data_sf <- st_as_sf(data, coords = c("Longitude", "Latitude"), crs = 4326, remove = FALSE)
+    
+    output$heatmap <- renderLeaflet({
+      leaflet(data = data_sf) %>%
+        addTiles() %>%
+        addHeatmap(
+          lng = ~Longitude, lat = ~Latitude, 
+          intensity = ~1,  # Todos os pontos têm a mesma intensidade
+          blur = 20, max = 0.05, radius = 15
+        )
+    })
+  })
+}
+
+shinyApp(ui, server)
+

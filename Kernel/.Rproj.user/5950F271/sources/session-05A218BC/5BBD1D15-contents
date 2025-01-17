@@ -1,0 +1,313 @@
+# Load necessary libraries
+library(shiny)
+library(shinydashboard)  
+library(leaflet)
+library(leaflet.extras)
+library(dplyr)
+library(DT)
+library(duckdb)
+library(DBI)
+library(stringr)
+
+
+# Initialize DuckDB connection
+con <- dbConnect(duckdb::duckdb(), dbdir = ":memory:")
+
+# Load the datasets into DuckDB
+dbExecute(con, "
+  CREATE TABLE SISSOLO_limp AS 
+  SELECT *, 
+         REPLACE(NO_CONTAM, '\"', '') AS NO_CONTAM_CLEAN 
+  FROM read_csv_auto('SISSOLO_limp.csv')
+")
+
+dbExecute(con, "CREATE TABLE CTF_BRASIL AS SELECT * FROM read_csv_auto('CTF_BRASIL_limp.csv')")
+
+# Define the user interface
+ui <- dashboardPage(
+  dashboardHeader(title = "CGVAM/DVSAT/SVSA"),
+  
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("SISSOLO", tabName = "sissolo", icon = icon("map")),
+      menuItem("CTF/IBAMA", tabName = "ctf_ibama", icon = icon("map"))
+    )
+  ),
+  
+  dashboardBody(
+    tabItems(
+      # SISSOLO tab
+      tabItem(tabName = "sissolo",
+              fluidPage(
+                titlePanel(
+                  div(
+                    tags$img(src = 'logo1.jpeg', height = '80px', style = "padding-right: 10px;"),
+                    span("Painel VIGIPEQ - SISSOLO"),
+                    style = "display: flex; align-items: center; padding-top: 10px; padding-bottom: 10px;"
+                  )
+                ),
+                fluidRow(
+                  box(width = 4,
+                      title = "Filtros de Seleção", status = "primary", solidHeader = TRUE,
+                      selectInput("region_sissolo", "Selecione a Região:", 
+                                  choices = c("Todos", dbGetQuery(con, "SELECT DISTINCT NM_REGIAO FROM SISSOLO_limp")$NM_REGIAO), 
+                                  selected = "Todos"),
+                      selectInput("state_sissolo", "Selecione o Estado:", 
+                                  choices = c("Todos", dbGetQuery(con, "SELECT DISTINCT NM_UF FROM SISSOLO_limp")$NM_UF), 
+                                  selected = "Todos"),
+                      selectizeInput("municipality_sissolo", "Selecione o Município:", 
+                                     choices = NULL, selected = "Todos", multiple = TRUE),
+                      selectInput("contaminant_sissolo", "Selecione o Contaminante:", 
+                                  choices = c("Todos", dbGetQuery(con, "SELECT DISTINCT NO_CONTAM FROM SISSOLO_limp")$NO_CONTAM), 
+                                  selected = "Todos",
+                                  multiple = TRUE),
+                      actionButton("apply_sissolo", "Aplicar filtro", icon = icon("filter"), class = "btn-primary")
+                  ),
+                  box(width = 8,
+                      leafletOutput("map_sissolo", height = 500)
+                  )
+                ),
+                fluidRow(
+                  box(width = 12, status = "primary", solidHeader = TRUE, 
+                      title = "Dados Agregados Segundo Seleção",
+                      DTOutput("summaryTable_sissolo")
+                  )
+                )
+              )
+      ),
+      # CTF IBAMA tab
+      tabItem(tabName = "ctf_ibama",
+              fluidPage(
+                titlePanel(
+                  div(
+                    tags$img(src = 'logo1.jpeg', height = '80px', style = "padding-right: 10px;"),
+                    span("Painel VIGIPEQ - CTF/APP"),
+                    style = "display: flex; align-items: center; padding-top: 10px; padding-bottom: 10px;"
+                  )
+                ),
+                fluidRow(
+                  box(width = 4,
+                      title = "Filtros de Seleção", status = "primary", solidHeader = TRUE,
+                      selectInput("region_ctf", "Selecione a Região:", 
+                                  choices = c("Todos", dbGetQuery(con, "SELECT DISTINCT Região FROM CTF_BRASIL")$Região), 
+                                  selected = "Todos"),
+                      selectInput("state_ctf", "Selecione o Estado:", 
+                                  choices = c("Todos", dbGetQuery(con, "SELECT DISTINCT Estado FROM CTF_BRASIL")$Estado), 
+                                  selected = "Todos"),
+                      selectizeInput("municipality_ctf", "Selecione o Município:", 
+                                     choices = c("Todos", dbGetQuery(con, "SELECT DISTINCT Municipio FROM CTF_BRASIL")$Municipio), 
+                                     selected = "Todos", multiple = TRUE),
+                      selectInput("Categoria_ctf", "Selecione a Categoria:", 
+                                  choices = c("Todos", dbGetQuery(con, "SELECT DISTINCT Categoria FROM CTF_BRASIL")$Categoria), 
+                                  selected = "Todos", multiple = TRUE),
+                      selectInput("Atividade_ctf", "Selecione a Atividade:", 
+                                  choices = c("Todos", dbGetQuery(con, "SELECT DISTINCT Atividade FROM CTF_BRASIL")$Atividade), 
+                                  selected = "Todos", multiple = TRUE),
+                      selectInput("Situação_ctf", "Selecione a Situação:", 
+                                  choices = c("Todos", dbGetQuery(con, "SELECT DISTINCT Situação FROM CTF_BRASIL")$Situação), 
+                                  selected = "Todos"),
+                      actionButton("apply_ctf", "Aplicar filtro", icon = icon("filter"), class = "btn-primary")
+                  ),
+                  box(width = 8,
+                      leafletOutput("map_ctf", height = 500)
+                  )
+                ),
+                fluidRow(
+                  box(width = 12, status = "primary", solidHeader = TRUE, 
+                      title = "Dados Agregados Segundo Seleção",
+                      DTOutput("summaryTable_ctf")
+                  )
+                )
+              )
+      )
+    )
+  )
+)
+
+# Define the server logic
+server <- function(input, output, session) {
+  
+  # SISSOLO reactive filtering
+  observeEvent(input$region_sissolo, {
+    query <- if (input$region_sissolo == "Todos") {
+      "SELECT DISTINCT NM_UF FROM SISSOLO_limp"
+    } else {
+      paste0("SELECT DISTINCT NM_UF FROM SISSOLO_limp WHERE NM_REGIAO = '", input$region_sissolo, "'")
+    }
+    filtered_states <- dbGetQuery(con, query)$NM_UF
+    updateSelectInput(session, "state_sissolo", choices = c("Todos", filtered_states), selected = "Todos")
+  })
+  
+  observeEvent(input$state_sissolo, {
+    query <- if (input$state_sissolo == "Todos") {
+      "SELECT DISTINCT NM_MUN FROM SISSOLO_limp"
+    } else {
+      paste0("SELECT DISTINCT NM_MUN FROM SISSOLO_limp WHERE NM_UF = '", input$state_sissolo, "'")
+    }
+    
+    municipalities <- dbGetQuery(con, query)$NM_MUN
+    
+    updateSelectizeInput(session, "municipality_sissolo", choices = municipalities, server = TRUE)
+  })
+  
+  # SISSOLO: Filtragem com aplicação do botão
+  filtered_data_sissolo <- eventReactive(input$apply_sissolo, {
+    query <- "SELECT * FROM SISSOLO_limp WHERE TRUE"
+    
+    if (input$region_sissolo != "Todos") {
+      query <- paste0(query, " AND NM_REGIAO = '", input$region_sissolo, "'")
+    }
+    if (input$state_sissolo != "Todos") {
+      query <- paste0(query, " AND NM_UF = '", input$state_sissolo, "'")
+    }
+    if (!is.null(input$municipality_sissolo) && !("Todos" %in% input$municipality_sissolo)) {
+      municipalities <- paste0("'", input$municipality_sissolo, "'", collapse = ", ")
+      query <- paste0(query, " AND NM_MUN IN (", municipalities, ")")
+    }
+    if (!is.null(input$contaminant_sissolo) && !("Todos" %in% input$contaminant_sissolo)) {
+      contaminants <- paste0("'", input$contaminant_sissolo, "'", collapse = ", ")
+      query <- paste0(query, " AND NO_CONTAM IN (", contaminants, ")")
+    }
+    
+    dbGetQuery(con, query)
+  })
+  
+  output$summaryTable_sissolo <- renderDT({
+    data <- filtered_data_sissolo()
+    if (nrow(data) > 0) {
+      summary <- data %>%
+        select(NM_UF, NM_REGIAO, NM_MUN, NO_CONTAM, pop_exp_05, pop_exp_1, pop_exp_2) %>%
+        arrange(NM_UF, NM_REGIAO, NM_MUN, NO_CONTAM)
+      
+      datatable(
+        summary,
+        extensions = 'Buttons',
+        options = list(
+          dom = 'Bfrtip',
+          buttons = list(
+            list(extend = 'csv', text = 'Download CSV', 
+                 filename = 'dados_sissolo.csv'),
+            list(extend = 'excel', text = 'Download Excel', 
+                 filename = 'dados_sissolo.xlsx')
+          ),
+          pageLength = -1,
+          lengthMenu = list(c(-1), c('All')),
+          scrollX = TRUE,
+          autoWidth = TRUE
+        ),
+        colnames = c("Estado", "Região", "Município", "Contaminante", "População Exposta (0,5km)", "População Exposta (1km)", "População Exposta (2km)"),
+        rownames = FALSE
+      )
+    }
+  })
+  
+  output$map_sissolo <- renderLeaflet({
+    data <- filtered_data_sissolo()
+    leaflet(data) %>% 
+      addTiles() %>% 
+      addCircleMarkers(
+        ~X.NU_LONGIT, ~X.NU_LATITU,
+        radius = ~log(pop_exp_05 + pop_exp_1 + pop_exp_2 + 0.1),
+        color = "blue",
+        fillOpacity = 0.6,
+        popup = ~paste(
+          "<strong>Região:</strong>", NM_REGIAO,
+          "<br><strong>Estado:</strong>", NM_UF,
+          "<br><strong>Município:</strong>", NM_MUN,
+          "<br><strong>Contaminante:</strong>", NO_CONTAM,
+          "<br><strong>População Exposta (0,5km):</strong>", pop_exp_05,
+          "<br><strong>População Exposta (1km):</strong>", pop_exp_1,
+          "<br><strong>População Exposta (2km):</strong>", pop_exp_2
+        )
+      )
+  })
+  
+  # CTF/APP reactive filtering
+  filtered_data_ctf <- eventReactive(input$apply_ctf, {
+    query <- "SELECT * FROM CTF_BRASIL WHERE TRUE"
+    
+    if (input$region_ctf != "Todos") {
+      query <- paste0(query, " AND Região = '", input$region_ctf, "'")
+    }
+    if (input$state_ctf != "Todos") {
+      query <- paste0(query, " AND Estado = '", input$state_ctf, "'")
+    }
+    if (!is.null(input$municipality_ctf) && !("Todos" %in% input$municipality_ctf)) {
+      municipalities <- paste0("'", input$municipality_ctf, "'", collapse = ", ")
+      query <- paste0(query, " AND Municipio IN (", municipalities, ")")
+    }
+    if (!is.null(input$Categoria_ctf) && !("Todos" %in% input$Categoria_ctf)) {
+      categories <- paste0("'", input$Categoria_ctf, "'", collapse = ", ")
+      query <- paste0(query, " AND Categoria IN (", categories, ")")
+    }
+    if (!is.null(input$Atividade_ctf) && !("Todos" %in% input$Atividade_ctf)) {
+      activities <- paste0("'", input$Atividade_ctf, "'", collapse = ", ")
+      query <- paste0(query, " AND Atividade IN (", activities, ")")
+    }
+    if (input$Situação_ctf != "Todos") {
+      query <- paste0(query, " AND Situação = '", input$Situação_ctf, "'")
+    }
+    
+    dbGetQuery(con, query)
+  })
+  
+  output$summaryTable_ctf <- renderDT({
+    data <- filtered_data_ctf()
+    if (nrow(data) > 0) {
+      summary <- data %>%
+        select(Estado, Região, Municipio, Categoria, Atividade, Situação, populacao, domicilios) %>%
+        arrange(Estado, Região, Municipio, Categoria, Atividade)
+      
+      datatable(
+        summary,
+        extensions = 'Buttons',
+        options = list(
+          dom = 'Bfrtip',
+          buttons = list(
+            list(extend = 'csv', text = 'Download CSV', 
+                 filename = 'dados_ctf.csv'),
+            list(extend = 'excel', text = 'Download Excel', 
+                 filename = 'dados_ctf.xlsx')
+          ),
+          pageLength = -1,
+          lengthMenu = list(c(-1), c('All')),
+          scrollX = TRUE,
+          autoWidth = TRUE
+        ),
+        colnames = c("Estado", "Região", "Município", "Categoria", "Atividade", "Situação", "População", "Domicílios"),
+        rownames = FALSE
+      )
+    }
+  })
+  
+  output$map_ctf <- renderLeaflet({
+    data <- filtered_data_ctf()
+    leaflet(data) %>% 
+      addTiles() %>% 
+      addCircleMarkers(
+        ~LONGITUDE, ~LATITUDE,
+        radius = ~log(populacao + 0.1),
+        color = "red",
+        fillOpacity = 0.6,
+        popup = ~paste(
+          "<strong>Região:</strong>", Região,
+          "<br><strong>Estado:</strong>", Estado,
+          "<br><strong>Município:</strong>", Municipio,
+          "<br><strong>Categoria:</strong>", Categoria,
+          "<br><strong>Atividade:</strong>", Atividade,
+          "<br><strong>Situação:</strong>", Situação,
+          "<br><strong>População:</strong>", populacao,
+          "<br><strong>Domicílios:</strong>", domicilios
+        )
+      )
+  })
+}
+
+# Close the DuckDB connection when done
+onStop(function() {
+  dbDisconnect(con, shutdown = TRUE)  
+})
+
+# Create the Shiny app
+shinyApp(ui, server)
+  
