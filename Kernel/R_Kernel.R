@@ -41,6 +41,11 @@ google_coords_sf <- st_as_sf(google_coords, coords = c("long", "lat"), crs = 432
 # Criar o objeto sf para ArcGIS
 arcgis_coords_sf <- st_as_sf(arcgis_coords, coords = c("long", "lat"), crs = 4326, remove = FALSE)
 
+
+
+
+
+#mapa sem delimitações territoriais
 # Renderizar o mapa de calor dinâmico com leaflet
 leaflet(data = google_coords_sf) %>%
   addTiles() %>%
@@ -83,7 +88,7 @@ leaflet(data = arcgis_coords_sf) %>%
 
 
 
-#COM DELIMITAÇÃO TERRITORIAL
+#COM DELIMITAÇÃO TERRITORIAL - DISTRITO FEDERAL
 # Carregar os limites estaduais do Brasil
 estados <- read_state(year = 2020, simplified = TRUE)
 setores_df <- st_read("F:/lucas.sanglard/OneDrive - Ministério da Saúde/Área de Trabalho/R_Walter/Shapes/Kernel_R/Setores Censitários DF.shp")
@@ -125,6 +130,67 @@ leaflet(data = arcgis_coords_sf) %>%
   ) %>%
   addPolylines(
     data = setores_df, 
+    color = "black",  # Cor das linhas
+    weight = 1,       # Espessura das linhas
+    opacity = 0.8     # Transparência
+  ) %>%
+  setView(
+    lng = mean(arcgis_coords$long, na.rm = TRUE), 
+    lat = mean(arcgis_coords$lat, na.rm = TRUE), 
+    zoom = 10
+  )
+
+
+
+
+
+
+
+
+
+
+#COM DELIMITAÇÃO TERRITORIAL - PERNAMBUCO
+# Carregar os limites estaduais do Brasil
+estados <- read_state(year = 2020, simplified = TRUE)
+setores_REC <- st_read("F:/lucas.sanglard/OneDrive - Ministério da Saúde/Área de Trabalho/R_Walter/Shapes/Kernel_R/Setores Censitários REC.shp")
+
+# Criar o objeto sf para Google Maps
+google_coords_sf <- st_as_sf(google_coords, coords = c("long", "lat"), crs = 4326, remove = FALSE)
+
+# Renderizar o mapa de calor com o shape de estados/setores ---- GOOOGLE
+leaflet(data = google_coords_sf) %>%
+  addTiles() %>%
+  addHeatmap(
+    lng = ~long, lat = ~lat, 
+    intensity = ~1,  # Todos os pontos têm a mesma intensidade
+    blur = 20,       # Controle do desfoque
+    max = 0.05,      # Intensidade máxima relativa
+    radius = 15      # Tamanho do raio dos pontos
+  ) %>%
+  addPolylines(
+    data = setores_REC, 
+    color = "black",  # Cor das linhas
+    weight = 1,       # Espessura das linhas
+    opacity = 0.8     # Transparência
+  ) %>%
+  setView(
+    lng = mean(google_coords$long, na.rm = TRUE), 
+    lat = mean(google_coords$lat, na.rm = TRUE), 
+    zoom = 10
+  )
+
+# Renderizar o mapa de calor com o shape de estados/setores ---- ARCGIS
+leaflet(data = arcgis_coords_sf) %>%
+  addTiles() %>%
+  addHeatmap(
+    lng = ~long, lat = ~lat, 
+    intensity = ~1,  # Todos os pontos têm a mesma intensidade
+    blur = 20,       # Controle do desfoque
+    max = 0.05,      # Intensidade máxima relativa
+    radius = 15      # Tamanho do raio dos pontos
+  ) %>%
+  addPolylines(
+    data = setores_REC, 
     color = "black",  # Cor das linhas
     weight = 1,       # Espessura das linhas
     opacity = 0.8     # Transparência
